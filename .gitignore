@@ -35,6 +35,9 @@ yarn-error.log*
 .env.*
 !.env.example
 .env.bak*
+*_env.download
+*_env.local
+dev_angel_*
 
 # vercel
 .vercel
