@@ -1,0 +1,140 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+
+@layer base {
+  /* default */
+  :root {
+    --background: 0 0% 100%;
+    --background-secondary: 30 14% 98%;
+    --foreground: 222.2 80.95% 9.14%;
+    --muted: 30 14% 98%;
+    --muted-dark: 30 14% 95%;
+    --muted-foreground: 215.4 16.3% 46.9%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 222.2 79.53% 12.21%;
+    --card: 0 0% 100%;
+    --card-foreground: 222.2 9.88% 26.95%;
+    --border: 196 5% 91%;
+    --border-dark: 196 5% 70%;
+    --input: 196 5% 89%;
+    --primary: 206.59 100% 50%;
+    --primary-foreground: 210 40% 98%;
+    --primary-light: 207 100% 97%;
+    --primary-light-foreground: 206.59 100% 50%;
+    --primary-dark: 206 59% 50%;
+    --primary-dark-foreground: 210 40% 98%;
+    --secondary: 210 40% 96.1%;
+    --secondary-foreground: 222.22 47.37% 11.18%;
+    --secondary-dark: 210 34% 92%;
+    --secondary-light: 210 50% 98%;
+    --tertiary: 0 84% 67%;
+    --tertiary-foreground: 0 0% 100%;
+    --accent: 210 40% 96.1%;
+    --accent-foreground: 222.2 9.62% 40.7%;
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 210 40% 98%;
+    --destructive-light: 0 100% 97%;
+    --destructive-light-foreground: 0 84.2% 60.2%;
+    --positive: 142.7 76.2% 31.2%;
+    --positive-foreground: 210 40% 98%;
+    --positive-light: 143 85% 72%;
+    --positive-light-foreground: 143 77% 42%;
+    --warning: 35 90% 50%;
+    --warning-foreground: 210 40% 98%;
+    --ring: 206.59 100% 50%;
+    --ring-red: 0 100% 82%;
+    --chart-1: 206.59 100% 50%;
+    --chart-2: 210 40% 96.1%;
+    --chart-3: 210 40% 96.1%;
+    --chart-4: 210 40% 99.1%;
+    --chart-5: 206.59 103% 50%;
+    --radius: 0.6rem;
+
+    /* 브랜드컬러 */
+    --brand-blue: 221 100% 63%;
+    --brand-mint: 180 91% 41%;
+    --brand-orange: 22 82% 60%;
+    --brand-pink: 330 84% 60%;
+    --brand-gray: 0 0% 64%;
+  }
+
+  /* sidebar */
+  :root {
+    --sidebar-background: var(--background);
+    --sidebar-foreground: var(--foreground);
+    --sidebar-primary: var(--primary);
+    --sidebar-primary-foreground: var(--primary-foreground);
+    --sidebar-accent: var(--accent);
+    --sidebar-accent-foreground: var(--accent-foreground);
+    --sidebar-border: var(--border);
+    --sidebar-ring: var(--ring);
+  }
+
+  /* layout */
+  :root {
+    --content-padding-x: 4rem;
+  }
+
+  /* Scrollbar */
+  ::-webkit-scrollbar {
+    width: 4px;
+    height: 4px;
+    background-color: hsl(var(--border));
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background-color: hsl(var(--primary));
+  }
+
+  /* global */
+  * {
+    @apply border-border;
+  }
+  html,
+  body {
+    @apply bg-background text-foreground;
+    font-family: var(--font-primary);
+  }
+}
+
+@layer components {
+  .skeleton-shimmer {
+    @apply animate-shimmer bg-skeleton-gradient bg-skeleton-bg-size;
+  }
+}
+
+/* CKEditor */
+:root {
+  --ck-border-radius: var(--radius) !important;
+  --ck-color-base-border: hsl(var(--border)) !important;
+  --ck-color-focus-border: hsl(var(--border)) !important;
+  --ck-inner-shadow: 0 0 0 0 hsl(var(--border)) !important;
+  --ck-z-default: 100 !important;
+}
+
+.ck-editor {
+  width: 100% !important;
+}
+
+.ck-content {
+  min-height: 200px !important;
+}
+
+.ck-editor__top {
+  position: sticky !important;
+  top: 69px !important;
+  z-index: 100 !important;
+  background-color: white !important; /* 툴바가 다른 요소에 가려지지 않도록 배경 색상을 지정합니다. */
+  border-bottom: 1px solid hsl(var(--border)) !important;
+}
+
+.ck-sticky-panel__content {
+  top: 69px !important;
+  box-shadow: none !important;
+}
+
+.ck-body-wrapper, .ck-body-wrapper * {
+  pointer-events: initial !important;
+}

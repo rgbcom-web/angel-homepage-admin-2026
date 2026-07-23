@@ -1,0 +1,101 @@
+'use server';
+
+import { createAdminClient } from '@/service/db/supabase/server';
+import { setPagingIndexes } from '@/features/manage-modules/components/ui';
+
+export async function getList(tableName, searchParams, itemsPerPage) {
+  try {
+    const { search, page, category } = searchParams;
+    const { startIndex, endIndex } = setPagingIndexes(page, itemsPerPage);
+
+    const supa = await createAdminClient();
+
+    const query = supa.from(tableName).select('*', { count: 'exact' }).range(startIndex, endIndex);
+
+    if (search) {
+      query.or(`question.ilike.%${search}%,answer.ilike.%${search}%`);
+    }
+
+    if (category) {
+      query.eq('category_1', category);
+    }
+
+    query.order('order', { ascending: false });
+
+    const { data, count, error } = await query;
+
+    if (error) {
+      throw error;
+    }
+
+    // 데이터 가공
+    data.map((item, i) => {
+      item.no = count - startIndex - i;
+    });
+
+    return { data, count };
+  } catch (error) {
+    console.error(error.message);
+    return {
+      data: [],
+      count: 0,
+      errors: {
+        message: '서버 오류가 발생했습니다.',
+      },
+    };
+  }
+}
+
+export async function getItemById(tableName, id) {
+  try {
+    const supa = await createAdminClient();
+
+    const query = supa.from(tableName).select('*').eq('id', id).single();
+
+    const { data, error } = await query;
+
+    if (error) {
+      throw error;
+    }
+
+    return { data };
+  } catch (error) {
+    console.error(error.message);
+    return {
+      errors: {
+        message: '서버 오류가 발생했습니다.',
+      },
+    };
+  }
+}
+
+export async function getCategories(tableName) {
+  try {
+    const supa = await createAdminClient();
+
+    const query = supa.from(tableName).select('*');
+
+    const { data, error } = await query;
+
+    if (error) {
+      throw error;
+    }
+
+    const depth1 = data.filter((item) => item.parent === null);
+    const depth2 = data.filter((item) => item.parent !== null);
+
+    const categories = {
+      depth1,
+      depth2,
+    };
+
+    return { categories };
+  } catch (error) {
+    console.error(error.message);
+    return {
+      errors: {
+        message: '서버 오류가 발생했습니다.',
+      },
+    };
+  }
+}
