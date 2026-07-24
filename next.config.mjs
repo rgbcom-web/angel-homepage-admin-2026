@@ -5,6 +5,20 @@ const nextConfig = {
       bodySizeLimit: '30mb',
     },
   },
+  async redirects() {
+    return [
+      {
+        source: '/',
+        destination: '/pediatric/dashboard',
+        permanent: false,
+      },
+      {
+        source: '/pediatric',
+        destination: '/pediatric/dashboard',
+        permanent: false,
+      },
+    ];
+  },
   async rewrites() {
     return [
       {
