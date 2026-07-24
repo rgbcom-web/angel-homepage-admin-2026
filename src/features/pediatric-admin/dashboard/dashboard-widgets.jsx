@@ -1,12 +1,27 @@
 'use client';
 
+import { useEffect, useRef, useState } from 'react';
 import { cn } from '@/shared/lib/utils';
 
 export function AccessTrendChart({ data = [] }) {
-  const width = 920;
-  const height = 280;
-  const padding = { top: 28, right: 20, bottom: 36, left: 40 };
-  const innerW = width - padding.left - padding.right;
+  const containerRef = useRef(null);
+  const [width, setWidth] = useState(0);
+
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return undefined;
+
+    const update = () => setWidth(el.clientWidth);
+    update();
+
+    const observer = new ResizeObserver(update);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+
+  const height = 220;
+  const padding = { top: 24, right: 16, bottom: 32, left: 36 };
+  const innerW = Math.max(0, width - padding.left - padding.right);
   const innerH = height - padding.top - padding.bottom;
 
   const max = Math.max(10, ...data.map((d) => d.count));
@@ -24,60 +39,82 @@ export function AccessTrendChart({ data = [] }) {
       ? `${linePath} L ${points[points.length - 1].x} ${innerH} L ${points[0].x} ${innerH} Z`
       : '';
 
-  const labelStep = Math.max(1, Math.ceil(data.length / 8));
+  // 너비에 맞춰 x축 라벨 개수 조절
+  const labelCount = Math.max(4, Math.floor(innerW / 72));
+  const labelStep = Math.max(1, Math.ceil(data.length / labelCount));
 
   return (
-    <div className="w-full overflow-x-auto">
-      <svg viewBox={`0 0 ${width} ${height}`} className="min-w-[640px] w-full">
-        <g transform={`translate(${padding.left}, ${padding.top})`}>
-          {yTicks.map((tick) => {
-            const y = innerH - (tick / max) * innerH;
-            return (
-              <g key={tick}>
-                <line x1={0} x2={innerW} y1={y} y2={y} stroke="#E2E8F0" strokeDasharray="4 4" />
-                <text x={-10} y={y + 4} textAnchor="end" className="fill-slate-400 text-[11px]">
-                  {tick}
-                </text>
+    <div ref={containerRef} className="w-full">
+      {width > 0 && (
+        <svg width={width} height={height} className="block">
+          <g transform={`translate(${padding.left}, ${padding.top})`}>
+            {yTicks.map((tick) => {
+              const y = innerH - (tick / max) * innerH;
+              return (
+                <g key={tick}>
+                  <line
+                    x1={0}
+                    x2={innerW}
+                    y1={y}
+                    y2={y}
+                    stroke="#E2E8F0"
+                    strokeWidth="1"
+                    strokeDasharray="3 5"
+                  />
+                  <text x={-8} y={y + 4} textAnchor="end" fill="#94A3B8" fontSize="13">
+                    {tick}
+                  </text>
+                </g>
+              );
+            })}
+
+            {areaPath && <path d={areaPath} fill="rgba(37, 99, 235, 0.1)" />}
+            {linePath && (
+              <path
+                d={linePath}
+                fill="none"
+                stroke="#2563EB"
+                strokeWidth="1.5"
+                strokeLinejoin="round"
+                strokeLinecap="round"
+              />
+            )}
+
+            {points.map((p) => (
+              <g key={p.date}>
+                <circle cx={p.x} cy={p.y} r="2.5" fill="#2563EB" />
+                {p.count > 0 && (
+                  <text
+                    x={p.x}
+                    y={p.y - 8}
+                    textAnchor="middle"
+                    fill="#475569"
+                    fontSize="12"
+                    fontWeight="500"
+                  >
+                    {p.count}
+                  </text>
+                )}
               </g>
-            );
-          })}
+            ))}
 
-          {areaPath && <path d={areaPath} fill="rgba(37, 99, 235, 0.12)" />}
-          {linePath && (
-            <path d={linePath} fill="none" stroke="#2563EB" strokeWidth="2.5" strokeLinejoin="round" />
-          )}
-
-          {points.map((p) => (
-            <g key={p.date}>
-              <circle cx={p.x} cy={p.y} r="3.5" fill="#2563EB" />
-              {p.count > 0 && (
+            {points.map((p, i) =>
+              i % labelStep === 0 || i === points.length - 1 ? (
                 <text
+                  key={`label-${p.date}`}
                   x={p.x}
-                  y={p.y - 10}
+                  y={innerH + 20}
                   textAnchor="middle"
-                  className="fill-slate-600 text-[10px] font-medium"
+                  fill="#94A3B8"
+                  fontSize="13"
                 >
-                  {p.count}
+                  {p.label}
                 </text>
-              )}
-            </g>
-          ))}
-
-          {points.map((p, i) =>
-            i % labelStep === 0 || i === points.length - 1 ? (
-              <text
-                key={`label-${p.date}`}
-                x={p.x}
-                y={innerH + 22}
-                textAnchor="middle"
-                className="fill-slate-400 text-[11px]"
-              >
-                {p.label}
-              </text>
-            ) : null,
-          )}
-        </g>
-      </svg>
+              ) : null,
+            )}
+          </g>
+        </svg>
+      )}
     </div>
   );
 }
