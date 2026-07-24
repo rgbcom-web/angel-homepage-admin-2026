@@ -12,6 +12,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/shared/shadcn/components/ui/dialog';
+import { SideSheet, useSheet } from '@/features/components/sheet';
 import {
   createBoardItem,
   deleteBoardItem,
@@ -24,7 +25,24 @@ import { toast } from 'sonner';
 const initialState = { success: false, message: '' };
 const inputClass = 'h-9 w-full rounded-md border bg-background px-3 text-sm';
 
-export function BoardCreateForm({ boardKey }) {
+const CREATE_TITLES = {
+  resources: '자료 등록',
+  events: '행사 등록',
+  surveys: '설문 등록',
+};
+
+/** 다른 게시판과 동일: CreateButton + SideSheet */
+export function BoardCreateSideSheet({ boardKey }) {
+  return (
+    <SideSheet
+      title={CREATE_TITLES[boardKey] || '게시글 생성'}
+      body={<BoardCreateForm boardKey={boardKey} />}
+      size="md"
+    />
+  );
+}
+
+function BoardCreateForm({ boardKey }) {
   if (boardKey === 'events') {
     return <EventCreateForm />;
   }
@@ -40,12 +58,14 @@ export function BoardCreateForm({ boardKey }) {
 
 function ResourceCreateForm() {
   const router = useRouter();
+  const { setSheetOpen } = useSheet();
   const [fileName, setFileName] = useState('');
   const [state, formAction, pending] = useActionState(async (_prev, formData) => {
     const result = await createBoardItem('resources', formData);
     if (result.success) {
       toast.success('자료가 등록되었습니다.');
       setFileName('');
+      setSheetOpen(false);
       router.refresh();
       return { success: true, message: '' };
     }
@@ -53,8 +73,7 @@ function ResourceCreateForm() {
   }, initialState);
 
   return (
-    <form action={formAction} className="mb-6 space-y-3 rounded-lg border bg-muted/20 p-4">
-      <p className="text-sm font-medium">자료 등록</p>
+    <form action={formAction} className="space-y-3">
       <p className="text-xs text-muted-foreground">
         업로드된 파일은 포털에서 다운로드되지 않으며, 보안 뷰어로만 열람됩니다.
       </p>
@@ -107,10 +126,12 @@ function ResourceCreateForm() {
 
 function EventCreateForm() {
   const router = useRouter();
+  const { setSheetOpen } = useSheet();
   const [state, formAction, pending] = useActionState(async (_prev, formData) => {
     const result = await createBoardItem('events', formData);
     if (result.success) {
       toast.success('행사가 등록되었습니다.');
+      setSheetOpen(false);
       router.refresh();
       return { success: true, message: '' };
     }
@@ -118,8 +139,7 @@ function EventCreateForm() {
   }, initialState);
 
   return (
-    <form action={formAction} className="mb-6 space-y-3 rounded-lg border bg-muted/20 p-4">
-      <p className="text-sm font-medium">행사 등록</p>
+    <form action={formAction} className="space-y-3">
       <div className="grid grid-cols-2 gap-3 max-sm:grid-cols-1">
         <input name="title" required placeholder="제목 (예: WCNR 2026)" className={inputClass} />
         <input
@@ -168,10 +188,12 @@ function EventCreateForm() {
 
 function SurveyCreateForm() {
   const router = useRouter();
+  const { setSheetOpen } = useSheet();
   const [state, formAction, pending] = useActionState(async (_prev, formData) => {
     const result = await createBoardItem('surveys', formData);
     if (result.success) {
       toast.success('설문이 등록되었습니다.');
+      setSheetOpen(false);
       router.refresh();
       return { success: true, message: '' };
     }
@@ -179,8 +201,7 @@ function SurveyCreateForm() {
   }, initialState);
 
   return (
-    <form action={formAction} className="mb-6 space-y-3 rounded-lg border bg-muted/20 p-4">
-      <p className="text-sm font-medium">설문 등록</p>
+    <form action={formAction} className="space-y-3">
       <input name="title" required placeholder="제목" className={inputClass} />
       <div className="grid grid-cols-2 gap-3 max-sm:grid-cols-1">
         <label className="space-y-1 text-xs text-muted-foreground">
@@ -319,7 +340,7 @@ function EventsTable({ list }) {
   if (!list?.length) {
     return (
       <div className="rounded-lg border py-16 text-center text-sm text-muted-foreground">
-        등록된 행사가 없습니다. 위에서 행사를 등록해 주세요.
+        등록된 행사가 없습니다.
       </div>
     );
   }
@@ -390,7 +411,7 @@ function SurveysTable({ list }) {
   if (!list?.length) {
     return (
       <div className="rounded-lg border py-16 text-center text-sm text-muted-foreground">
-        등록된 설문이 없습니다. 위에서 설문을 등록해 주세요.
+        등록된 설문이 없습니다.
       </div>
     );
   }

@@ -1,9 +1,19 @@
 import { notFound } from 'next/navigation';
 import { PageContainer, PageHeader, PageBody } from '@/shared/layouts/PageLayouts';
-import { ListPagination, Searchbar } from '@/features/manage-modules/components/ui';
+import {
+  ListPagination,
+  Searchbar,
+  CreateButton,
+} from '@/features/manage-modules/components/ui';
 import { PEDIATRIC_BOARD_META, PEDIATRIC_SITE_NAME } from '@/features/pediatric-admin/constants';
 import { getBoardList } from '@/features/pediatric-admin/api/boards';
-import { BoardCreateForm, BoardsTable } from '@/features/pediatric-admin/boards/boards-ui';
+import { BoardCreateSideSheet, BoardsTable } from '@/features/pediatric-admin/boards/boards-ui';
+
+const CREATE_LABELS = {
+  resources: '자료 등록',
+  events: '행사 등록',
+  surveys: '설문 등록',
+};
 
 export default async function PediatricBoardPage({ boardKey, searchParams }) {
   const meta = PEDIATRIC_BOARD_META[boardKey];
@@ -15,7 +25,15 @@ export default async function PediatricBoardPage({ boardKey, searchParams }) {
 
   return (
     <PageContainer>
-      <PageHeader title={`${PEDIATRIC_SITE_NAME} ${meta.title} 관리`} thirdSlot={<Searchbar />} />
+      <PageHeader
+        title={`${PEDIATRIC_SITE_NAME} ${meta.title} 관리`}
+        primarySlot={
+          <CreateButton label={CREATE_LABELS[boardKey] || '게시글 생성'}>
+            <BoardCreateSideSheet boardKey={boardKey} />
+          </CreateButton>
+        }
+        thirdSlot={<Searchbar />}
+      />
       <PageBody>
         <p className="mb-4 text-sm text-muted-foreground">{meta.description}</p>
         {errors?.message && (
@@ -44,7 +62,6 @@ export default async function PediatricBoardPage({ boardKey, searchParams }) {
             )}
           </div>
         )}
-        <BoardCreateForm boardKey={boardKey} />
         <BoardsTable boardKey={boardKey} list={data} />
         <ListPagination
           itemsPerPage={configs.itemsPerPage}
