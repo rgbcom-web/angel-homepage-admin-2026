@@ -10,9 +10,15 @@ import { PEDIATRIC_BOARD_META } from '../constants';
 const BUCKET_NAME =
   process.env.PEDIATRIC_SUPABASE_STORAGE_BUCKET ||
   process.env.NEXT_PUBLIC_SUPABASE_STORAGE_BUCKET;
+/** 행사 이미지는 포털에서 바로 보여야 해서 public 버킷 사용 */
+const EVENT_IMAGE_BUCKET =
+  process.env.NEXT_PUBLIC_SUPABASE_STORAGE_BUCKET || BUCKET_NAME;
 const RESOURCE_UPLOAD_PATH = 'advisory_resources';
+const EVENT_IMAGE_UPLOAD_PATH = 'advisory_events';
 const RESOURCE_MAX_BYTES = 50 * 1024 * 1024;
+const EVENT_IMAGE_MAX_BYTES = 10 * 1024 * 1024;
 const RESOURCE_ALLOWED_EXT = new Set(['pdf', 'png', 'jpg', 'jpeg', 'gif', 'webp']);
+const EVENT_IMAGE_ALLOWED_EXT = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp']);
 
 function resolveResourceFileType(fileName) {
   const ext = String(fileName || '')
@@ -64,6 +70,62 @@ async function uploadResourceFile(file) {
   };
 }
 
+async function uploadEventImages(fileList) {
+  const files = Array.from(fileList || []).filter(
+    (file) => file && typeof file !== 'string' && file.size,
+  );
+  if (!files.length) {
+    return { images: [] };
+  }
+
+  if (!EVENT_IMAGE_BUCKET) {
+    return {
+      error: '스토리지 버킷 설정(NEXT_PUBLIC_SUPABASE_STORAGE_BUCKET)이 없습니다.',
+    };
+  }
+
+  const supa = await createAdminClient();
+  const images = [];
+
+  for (const file of files) {
+    if (file.size > EVENT_IMAGE_MAX_BYTES) {
+      return { error: '이미지 파일은 각 10MB 이하여야 합니다.' };
+    }
+
+    const originalName = file.name || 'image';
+    const extension = originalName.split('.').pop()?.toLowerCase() || '';
+    if (!EVENT_IMAGE_ALLOWED_EXT.has(extension)) {
+      return { error: '이미지(png/jpg/gif/webp)만 업로드할 수 있습니다.' };
+    }
+
+    const filePath = `${EVENT_IMAGE_UPLOAD_PATH}/image-${uuidv4()}.${extension}`;
+    const { error } = await supa.storage.from(EVENT_IMAGE_BUCKET).upload(filePath, file, {
+      contentType: file.type || undefined,
+      upsert: false,
+    });
+
+    if (error) {
+      console.error('[uploadEventImages]', error);
+      for (const uploaded of images) {
+        await removeEventImageFile(uploaded.path);
+      }
+      return { error: error.message || '이미지 업로드에 실패했습니다.' };
+    }
+
+    const {
+      data: { publicUrl },
+    } = supa.storage.from(EVENT_IMAGE_BUCKET).getPublicUrl(filePath);
+
+    images.push({
+      path: filePath,
+      name: originalName,
+      url: publicUrl,
+    });
+  }
+
+  return { images };
+}
+
 async function removeStorageFile(filePath) {
   if (!filePath || !BUCKET_NAME || /^https?:\/\//i.test(filePath)) return;
   try {
@@ -72,6 +134,30 @@ async function removeStorageFile(filePath) {
   } catch (error) {
     console.error('[removeStorageFile]', error);
   }
+}
+
+async function removeEventImageFile(filePath) {
+  if (!filePath || !EVENT_IMAGE_BUCKET || /^https?:\/\//i.test(filePath)) return;
+  try {
+    const supa = await createAdminClient();
+    await supa.storage.from(EVENT_IMAGE_BUCKET).remove([filePath]);
+  } catch (error) {
+    console.error('[removeEventImageFile]', error);
+  }
+}
+
+function normalizeEventImages(value) {
+  if (!value) return [];
+  if (Array.isArray(value)) return value.filter((item) => item?.url || item?.path);
+  if (typeof value === 'string') {
+    try {
+      const parsed = JSON.parse(value);
+      return Array.isArray(parsed) ? parsed.filter((item) => item?.url || item?.path) : [];
+    } catch {
+      return [];
+    }
+  }
+  return [];
 }
 
 export async function getBoardList(boardKey, searchParams = {}, itemsPerPage = 15) {
@@ -168,6 +254,11 @@ export async function createBoardItem(boardKey, formData) {
         return { success: false, message: '종료일은 시작일 이후여야 합니다.' };
       }
 
+      const uploadedImages = await uploadEventImages(formData.getAll('images'));
+      if (uploadedImages.error) {
+        return { success: false, message: uploadedImages.error };
+      }
+
       payload = {
         title,
         subtitle,
@@ -180,6 +271,7 @@ export async function createBoardItem(boardKey, formData) {
         show_in_notice: showInNotice,
         is_notice: false,
         views: 0,
+        images: uploadedImages.images,
       };
     } else if (boardKey === 'surveys') {
       const startDate = String(formData.get('start_date') || '').trim();
@@ -218,6 +310,21 @@ export async function createBoardItem(boardKey, formData) {
       if (boardKey === 'resources' && payload.file_path) {
         await removeStorageFile(payload.file_path);
       }
+      if (boardKey === 'events' && Array.isArray(payload.images)) {
+        for (const image of payload.images) {
+          await removeEventImageFile(image.path);
+        }
+      }
+      if (
+        boardKey === 'events' &&
+        /images['"]?\s*column|schema cache/i.test(String(error.message || ''))
+      ) {
+        return {
+          success: false,
+          message:
+            'DB에 images 컬럼이 없습니다. Supabase에서 sql/advisory_events.sql 의 alter 문을 실행해 주세요.',
+        };
+      }
       throw error;
     }
 
@@ -240,6 +347,7 @@ export async function deleteBoardItem(boardKey, id) {
     const supa = await createAdminClient();
 
     let filePath = null;
+    let eventImages = [];
     if (boardKey === 'resources') {
       const { data: existing } = await supa
         .from(meta.tableName)
@@ -248,12 +356,23 @@ export async function deleteBoardItem(boardKey, id) {
         .maybeSingle();
       filePath = existing?.file_path || null;
     }
+    if (boardKey === 'events') {
+      const { data: existing } = await supa
+        .from(meta.tableName)
+        .select('images')
+        .eq('id', id)
+        .maybeSingle();
+      eventImages = normalizeEventImages(existing?.images);
+    }
 
     const { error } = await supa.from(meta.tableName).delete().eq('id', id);
     if (error) throw error;
 
     if (filePath) {
       await removeStorageFile(filePath);
+    }
+    for (const image of eventImages) {
+      await removeEventImageFile(image.path);
     }
 
     revalidatePath(`/pediatric/boards/${boardKey}`);
@@ -360,6 +479,51 @@ export async function updateBoardItem(boardKey, id, formData) {
         show_in_notice: showInNotice,
         is_notice: false,
       };
+
+      const { data: existing } = await supa
+        .from(meta.tableName)
+        .select('images')
+        .eq('id', id)
+        .maybeSingle();
+      const previousImages = normalizeEventImages(existing?.images);
+      const manageImages = formData.get('manage_images') === '1';
+      const files = formData.getAll('images');
+      const hasNewImages = files.some((file) => file && typeof file !== 'string' && file.size);
+
+      if (manageImages) {
+        const keepPaths = new Set(
+          formData
+            .getAll('keep_image_paths')
+            .map((value) => String(value || '').trim())
+            .filter(Boolean),
+        );
+        const keptImages = previousImages.filter((image) => image.path && keepPaths.has(image.path));
+        const removedImages = previousImages.filter(
+          (image) => image.path && !keepPaths.has(image.path),
+        );
+
+        let nextImages = keptImages;
+        if (hasNewImages) {
+          const uploadedImages = await uploadEventImages(files);
+          if (uploadedImages.error) {
+            return { success: false, message: uploadedImages.error };
+          }
+          nextImages = [...keptImages, ...uploadedImages.images];
+          newFilePath = uploadedImages.images.map((image) => image.path).join('|') || null;
+        }
+
+        payload.images = nextImages;
+        oldFilePath = removedImages.map((image) => image.path).join('|') || null;
+      } else if (hasNewImages) {
+        const uploadedImages = await uploadEventImages(files);
+        if (uploadedImages.error) {
+          return { success: false, message: uploadedImages.error };
+        }
+
+        payload.images = uploadedImages.images;
+        oldFilePath = previousImages.map((image) => image.path).join('|') || null;
+        newFilePath = uploadedImages.images.map((image) => image.path).join('|') || null;
+      }
     } else if (boardKey === 'surveys') {
       const startDate = String(formData.get('start_date') || '').trim();
       const endDate = String(formData.get('end_date') || '').trim() || startDate;
@@ -391,12 +555,32 @@ export async function updateBoardItem(boardKey, id, formData) {
 
     const { error } = await supa.from(meta.tableName).update(payload).eq('id', id);
     if (error) {
-      if (newFilePath) await removeStorageFile(newFilePath);
+      if (boardKey === 'resources' && newFilePath) await removeStorageFile(newFilePath);
+      if (boardKey === 'events' && newFilePath) {
+        for (const path of String(newFilePath).split('|').filter(Boolean)) {
+          await removeEventImageFile(path);
+        }
+      }
+      if (
+        boardKey === 'events' &&
+        /images['"]?\s*column|schema cache/i.test(String(error.message || ''))
+      ) {
+        return {
+          success: false,
+          message:
+            'DB에 images 컬럼이 없습니다. Supabase에서 sql/advisory_events.sql 의 alter 문을 실행해 주세요.',
+        };
+      }
       throw error;
     }
 
-    if (oldFilePath && newFilePath && oldFilePath !== newFilePath) {
+    if (boardKey === 'resources' && oldFilePath && newFilePath && oldFilePath !== newFilePath) {
       await removeStorageFile(oldFilePath);
+    }
+    if (boardKey === 'events' && oldFilePath) {
+      for (const path of String(oldFilePath).split('|').filter(Boolean)) {
+        await removeEventImageFile(path);
+      }
     }
 
     revalidatePath(`/pediatric/boards/${boardKey}`);

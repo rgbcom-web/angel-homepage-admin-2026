@@ -127,10 +127,12 @@ function ResourceCreateForm() {
 function EventCreateForm() {
   const router = useRouter();
   const { setSheetOpen } = useSheet();
+  const [imageNames, setImageNames] = useState([]);
   const [state, formAction, pending] = useActionState(async (_prev, formData) => {
     const result = await createBoardItem('events', formData);
     if (result.success) {
       toast.success('행사가 등록되었습니다.');
+      setImageNames([]);
       setSheetOpen(false);
       router.refresh();
       return { success: true, message: '' };
@@ -172,6 +174,26 @@ function EventCreateForm() {
         placeholder="상세 설명"
         className="w-full rounded-md border bg-background px-3 py-2 text-sm"
       />
+      <div className="space-y-1.5">
+        <label className="text-sm font-medium" htmlFor="event-images">
+          이미지 첨부 (선택)
+        </label>
+        <input
+          id="event-images"
+          name="images"
+          type="file"
+          multiple
+          accept=".png,.jpg,.jpeg,.gif,.webp,image/*"
+          className="block w-full text-sm file:mr-3 file:rounded-md file:border-0 file:bg-primary file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-primary-foreground"
+          onChange={(e) =>
+            setImageNames(Array.from(e.target.files || []).map((file) => file.name))
+          }
+        />
+        <p className="text-xs text-muted-foreground">
+          png/jpg/gif/webp, 각 10MB · 포털 상세에서 바로 표시됩니다
+          {imageNames.length ? ` · ${imageNames.length}개 선택` : ''}
+        </p>
+      </div>
       <label className="flex items-center gap-2 text-sm">
         <input type="checkbox" name="show_in_notice" />
         홈 공지사항 노출
@@ -709,10 +731,15 @@ function ResourceEditButton({ item }) {
 function EventEditButton({ item }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
+  const [imageNames, setImageNames] = useState([]);
+  const [keptImages, setKeptImages] = useState(() =>
+    Array.isArray(item.images) ? item.images.filter((img) => img?.path || img?.url) : [],
+  );
   const [state, formAction, pending] = useActionState(async (_prev, formData) => {
     const result = await updateBoardItem('events', item.id, formData);
     if (result.success) {
       toast.success('행사가 수정되었습니다.');
+      setImageNames([]);
       setOpen(false);
       router.refresh();
       return { success: true, message: '' };
@@ -720,17 +747,28 @@ function EventEditButton({ item }) {
     return result;
   }, initialState);
 
+  const handleOpenChange = (nextOpen) => {
+    setOpen(nextOpen);
+    if (nextOpen) {
+      setKeptImages(
+        Array.isArray(item.images) ? item.images.filter((img) => img?.path || img?.url) : [],
+      );
+      setImageNames([]);
+    }
+  };
+
   return (
     <>
-      <Button size="xs" variant="outline" onClick={() => setOpen(true)}>
+      <Button size="xs" variant="outline" onClick={() => handleOpenChange(true)}>
         수정
       </Button>
-      <Dialog open={open} onOpenChange={setOpen}>
+      <Dialog open={open} onOpenChange={handleOpenChange}>
         <DialogContent className="max-w-lg">
           <DialogHeader>
             <DialogTitle>행사 수정</DialogTitle>
           </DialogHeader>
           <form action={formAction} className="space-y-3">
+            <input type="hidden" name="manage_images" value="1" />
             <div className="grid grid-cols-2 gap-3 max-sm:grid-cols-1">
               <input
                 name="title"
@@ -790,6 +828,71 @@ function EventEditButton({ item }) {
               placeholder="상세 설명"
               className="w-full rounded-md border bg-background px-3 py-2 text-sm"
             />
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium">이미지</label>
+              {keptImages.length > 0 ? (
+                <ul className="space-y-2 rounded-md border bg-muted/30 p-2">
+                  {keptImages.map((img) => (
+                    <li
+                      key={img.path || img.url}
+                      className="flex items-center gap-2 rounded-md bg-background px-2 py-1.5"
+                    >
+                      {img.url ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img
+                          src={img.url}
+                          alt=""
+                          className="h-11 w-11 shrink-0 rounded object-cover"
+                        />
+                      ) : (
+                        <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded bg-muted text-[10px] text-muted-foreground">
+                          IMG
+                        </div>
+                      )}
+                      <span className="min-w-0 flex-1 truncate text-xs">
+                        {img.name || 'image'}
+                      </span>
+                      {img.path ? (
+                        <input type="hidden" name="keep_image_paths" value={img.path} />
+                      ) : null}
+                      <Button
+                        type="button"
+                        size="xs"
+                        variant="ghost"
+                        className="shrink-0 text-destructive hover:text-destructive"
+                        onClick={() =>
+                          setKeptImages((prev) =>
+                            prev.filter((itemImg) =>
+                              img.path
+                                ? itemImg.path !== img.path
+                                : itemImg.url !== img.url,
+                            ),
+                          )
+                        }
+                      >
+                        삭제
+                      </Button>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="text-xs text-muted-foreground">등록된 이미지가 없습니다.</p>
+              )}
+              <input
+                name="images"
+                type="file"
+                multiple
+                accept=".png,.jpg,.jpeg,.gif,.webp,image/*"
+                className="block w-full text-sm file:mr-3 file:rounded-md file:border-0 file:bg-primary file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-primary-foreground"
+                onChange={(e) =>
+                  setImageNames(Array.from(e.target.files || []).map((file) => file.name))
+                }
+              />
+              <p className="text-xs text-muted-foreground">
+                유지 {keptImages.length}장
+                {imageNames.length ? ` · 추가 업로드 ${imageNames.length}개` : ' · 새 파일은 기존에 추가됩니다'}
+              </p>
+            </div>
             <label className="flex items-center gap-2 text-sm">
               <input
                 type="checkbox"

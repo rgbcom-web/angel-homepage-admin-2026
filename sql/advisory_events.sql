@@ -17,5 +17,9 @@ create table if not exists public.advisory_events (
   created_at timestamptz default now()
 );
 
+-- 행사 상세에 바로 노출할 이미지 첨부 ([{ path, name, url }])
+alter table public.advisory_events
+  add column if not exists images jsonb default '[]'::jsonb;
+
 create index if not exists advisory_events_start_date_idx
   on public.advisory_events (start_date desc);

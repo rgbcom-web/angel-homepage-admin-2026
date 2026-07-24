@@ -20,7 +20,7 @@ export const PEDIATRIC_BOARD_META = {
     key: 'events',
     title: '행사',
     tableName: PEDIATRIC_TABLES.events,
-    description: `${PEDIATRIC_SITE_NAME} 포털 행사 목록에 노출됩니다. 홈 공지 체크 시 메인 공지사항에 표시됩니다. 카테고리는 최대 3글자(학회/워크샵/행사)로 등록해 주세요.`,
+    description: `${PEDIATRIC_SITE_NAME} 포털 행사 목록에 노출됩니다. 홈 공지 체크 시 메인 공지사항에 표시됩니다. 카테고리는 최대 3글자(학회/워크샵/행사)로 등록해 주세요. 이미지는 첨부하면 포털 상세에서 바로 표시됩니다.`,
   },
   surveys: {
     key: 'surveys',
