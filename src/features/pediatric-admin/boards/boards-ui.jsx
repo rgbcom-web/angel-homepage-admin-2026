@@ -41,6 +41,13 @@ function normalizeClientEventImages(value) {
   return [];
 }
 
+function isEventPdfAttachment(item) {
+  if (!item) return false;
+  if (item.type === 'pdf') return true;
+  const name = String(item.name || item.path || '').toLowerCase();
+  return name.endsWith('.pdf');
+}
+
 const CREATE_TITLES = {
   resources: '자료 등록',
   events: '행사 등록',
@@ -192,21 +199,21 @@ function EventCreateForm() {
       />
       <div className="space-y-1.5">
         <label className="text-sm font-medium" htmlFor="event-images">
-          이미지 첨부 (선택)
+          첨부 파일 (선택)
         </label>
         <input
           id="event-images"
           name="images"
           type="file"
           multiple
-          accept=".png,.jpg,.jpeg,.gif,.webp,image/*"
+          accept=".pdf,.png,.jpg,.jpeg,.gif,.webp,application/pdf,image/*"
           className="block w-full text-sm file:mr-3 file:rounded-md file:border-0 file:bg-primary file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-primary-foreground"
           onChange={(e) =>
             setImageNames(Array.from(e.target.files || []).map((file) => file.name))
           }
         />
         <p className="text-xs text-muted-foreground">
-          png/jpg/gif/webp, 각 10MB · 포털 상세에서 바로 표시됩니다
+          PDF 또는 이미지(png/jpg/gif/webp), 각 50MB · 포털 상세에서 바로 표시됩니다
           {imageNames.length ? ` · ${imageNames.length}개 선택` : ''}
         </p>
       </div>
@@ -841,15 +848,21 @@ function EventEditButton({ item }) {
               className="w-full rounded-md border bg-background px-3 py-2 text-sm"
             />
             <div className="space-y-1.5">
-              <label className="text-sm font-medium">이미지</label>
+              <label className="text-sm font-medium">첨부 파일</label>
               {keptImages.length > 0 ? (
                 <ul className="space-y-2 rounded-md border bg-muted/30 p-2">
-                  {keptImages.map((img) => (
+                  {keptImages.map((img) => {
+                    const isPdf = isEventPdfAttachment(img);
+                    return (
                     <li
                       key={img.path || img.url}
                       className="flex items-center gap-2 rounded-md bg-background px-2 py-1.5"
                     >
-                      {img.url ? (
+                      {isPdf ? (
+                        <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded bg-muted text-[10px] font-semibold text-muted-foreground">
+                          PDF
+                        </div>
+                      ) : img.url ? (
                         // eslint-disable-next-line @next/next/no-img-element
                         <img
                           src={img.url}
@@ -862,7 +875,7 @@ function EventEditButton({ item }) {
                         </div>
                       )}
                       <span className="min-w-0 flex-1 truncate text-xs">
-                        {img.name || 'image'}
+                        {img.name || (isPdf ? 'document.pdf' : 'image')}
                       </span>
                       <input
                         type="hidden"
@@ -872,6 +885,7 @@ function EventEditButton({ item }) {
                           name: img.name || '',
                           url: img.url || '',
                           bucket: img.bucket || '',
+                          type: img.type || (isPdf ? 'pdf' : 'image'),
                         })}
                       />
                       <Button
@@ -892,23 +906,24 @@ function EventEditButton({ item }) {
                         삭제
                       </Button>
                     </li>
-                  ))}
+                    );
+                  })}
                 </ul>
               ) : (
-                <p className="text-xs text-muted-foreground">등록된 이미지가 없습니다.</p>
+                <p className="text-xs text-muted-foreground">등록된 첨부 파일이 없습니다.</p>
               )}
               <input
                 name="images"
                 type="file"
                 multiple
-                accept=".png,.jpg,.jpeg,.gif,.webp,image/*"
+                accept=".pdf,.png,.jpg,.jpeg,.gif,.webp,application/pdf,image/*"
                 className="block w-full text-sm file:mr-3 file:rounded-md file:border-0 file:bg-primary file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-primary-foreground"
                 onChange={(e) =>
                   setImageNames(Array.from(e.target.files || []).map((file) => file.name))
                 }
               />
               <p className="text-xs text-muted-foreground">
-                유지 {keptImages.length}장
+                유지 {keptImages.length}개 · PDF/이미지 각 50MB
                 {imageNames.length
                   ? ` · 추가 업로드 ${imageNames.length}개`
                   : ' · 새 파일은 기존에 추가됩니다'}

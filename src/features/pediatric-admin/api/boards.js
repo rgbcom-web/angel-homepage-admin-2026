@@ -27,9 +27,9 @@ const EVENT_IMAGE_BUCKET_CANDIDATES = [
 const RESOURCE_UPLOAD_PATH = 'advisory_resources';
 const EVENT_IMAGE_UPLOAD_PATH = 'advisory_events';
 const RESOURCE_MAX_BYTES = 50 * 1024 * 1024;
-const EVENT_IMAGE_MAX_BYTES = 10 * 1024 * 1024;
+const EVENT_ATTACHMENT_MAX_BYTES = 50 * 1024 * 1024;
 const RESOURCE_ALLOWED_EXT = new Set(['pdf', 'png', 'jpg', 'jpeg', 'gif', 'webp']);
-const EVENT_IMAGE_ALLOWED_EXT = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp']);
+const EVENT_ATTACHMENT_ALLOWED_EXT = new Set(['pdf', 'png', 'jpg', 'jpeg', 'gif', 'webp']);
 const EVENT_IMAGE_SIGNED_TTL = 60 * 60 * 24; // 24h (관리자 미리보기용)
 
 function resolveResourceFileType(fileName) {
@@ -39,6 +39,19 @@ function resolveResourceFileType(fileName) {
     ?.toLowerCase();
   if (['png', 'jpg', 'jpeg', 'gif', 'webp'].includes(ext)) return 'image';
   return 'pdf';
+}
+
+function resolveEventAttachmentType(fileName) {
+  return resolveResourceFileType(fileName);
+}
+
+function contentTypeForEventAttachment(extension, fileType) {
+  if (fileType === 'pdf' || extension === 'pdf') return 'application/pdf';
+  if (extension === 'png') return 'image/png';
+  if (extension === 'gif') return 'image/gif';
+  if (extension === 'webp') return 'image/webp';
+  if (extension === 'jpg' || extension === 'jpeg') return 'image/jpeg';
+  return undefined;
 }
 
 async function uploadResourceFile(file) {
@@ -101,19 +114,20 @@ async function uploadEventImages(fileList) {
   const images = [];
 
   for (const file of files) {
-    if (file.size > EVENT_IMAGE_MAX_BYTES) {
-      return { error: '이미지 파일은 각 10MB 이하여야 합니다.' };
+    if (file.size > EVENT_ATTACHMENT_MAX_BYTES) {
+      return { error: '첨부 파일은 각 50MB 이하여야 합니다.' };
     }
 
-    const originalName = file.name || 'image';
+    const originalName = file.name || 'attachment';
     const extension = originalName.split('.').pop()?.toLowerCase() || '';
-    if (!EVENT_IMAGE_ALLOWED_EXT.has(extension)) {
-      return { error: '이미지(png/jpg/gif/webp)만 업로드할 수 있습니다.' };
+    if (!EVENT_ATTACHMENT_ALLOWED_EXT.has(extension)) {
+      return { error: 'PDF 또는 이미지(png/jpg/gif/webp)만 업로드할 수 있습니다.' };
     }
 
-    const filePath = `${EVENT_IMAGE_UPLOAD_PATH}/image-${uuidv4()}.${extension}`;
+    const fileType = resolveEventAttachmentType(originalName);
+    const filePath = `${EVENT_IMAGE_UPLOAD_PATH}/file-${uuidv4()}.${extension}`;
     const { error } = await supa.storage.from(EVENT_IMAGE_BUCKET).upload(filePath, file, {
-      contentType: file.type || undefined,
+      contentType: file.type || contentTypeForEventAttachment(extension, fileType),
       upsert: false,
     });
 
@@ -122,7 +136,7 @@ async function uploadEventImages(fileList) {
       for (const uploaded of images) {
         await removeEventImageFile(uploaded.path, uploaded.bucket);
       }
-      return { error: error.message || '이미지 업로드에 실패했습니다.' };
+      return { error: error.message || '파일 업로드에 실패했습니다.' };
     }
 
     const {
@@ -137,6 +151,7 @@ async function uploadEventImages(fileList) {
       path: filePath,
       name: originalName,
       bucket: EVENT_IMAGE_BUCKET,
+      type: fileType,
       url: signed?.signedUrl || publicUrl,
     });
   }
@@ -214,7 +229,12 @@ async function withFreshEventImageUrls(images) {
 
   for (const image of list) {
     if (!image.path) {
-      if (image.url) resolved.push(image);
+      if (image.url) {
+        resolved.push({
+          ...image,
+          type: image.type || resolveEventAttachmentType(image.name || image.url),
+        });
+      }
       continue;
     }
 
@@ -240,6 +260,7 @@ async function withFreshEventImageUrls(images) {
       path: image.path,
       name: image.name || 'image',
       bucket: bucket || undefined,
+      type: image.type || resolveEventAttachmentType(image.name || image.path),
       url,
     });
   }
@@ -601,6 +622,7 @@ export async function updateBoardItem(boardKey, id, formData) {
           name: image.name || 'image',
           bucket: image.bucket || undefined,
           url: image.url || undefined,
+          type: image.type || resolveEventAttachmentType(image.name || image.path),
         }));
 
         if (hasNewImages) {
