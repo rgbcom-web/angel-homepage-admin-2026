@@ -10,15 +10,27 @@ import { PEDIATRIC_BOARD_META } from '../constants';
 const BUCKET_NAME =
   process.env.PEDIATRIC_SUPABASE_STORAGE_BUCKET ||
   process.env.NEXT_PUBLIC_SUPABASE_STORAGE_BUCKET;
-/** 행사 이미지는 포털에서 바로 보여야 해서 public 버킷 사용 */
+/** 행사 이미지 버킷 (public 우선, 없으면 pediatric) — path+bucket 저장 후 표시 시 signed URL */
 const EVENT_IMAGE_BUCKET =
-  process.env.NEXT_PUBLIC_SUPABASE_STORAGE_BUCKET || BUCKET_NAME;
+  process.env.NEXT_PUBLIC_SUPABASE_STORAGE_BUCKET ||
+  process.env.PEDIATRIC_SUPABASE_STORAGE_BUCKET ||
+  BUCKET_NAME;
+const EVENT_IMAGE_BUCKET_CANDIDATES = [
+  ...new Set(
+    [
+      process.env.NEXT_PUBLIC_SUPABASE_STORAGE_BUCKET,
+      process.env.PEDIATRIC_SUPABASE_STORAGE_BUCKET,
+      BUCKET_NAME,
+    ].filter(Boolean),
+  ),
+];
 const RESOURCE_UPLOAD_PATH = 'advisory_resources';
 const EVENT_IMAGE_UPLOAD_PATH = 'advisory_events';
 const RESOURCE_MAX_BYTES = 50 * 1024 * 1024;
 const EVENT_IMAGE_MAX_BYTES = 10 * 1024 * 1024;
 const RESOURCE_ALLOWED_EXT = new Set(['pdf', 'png', 'jpg', 'jpeg', 'gif', 'webp']);
 const EVENT_IMAGE_ALLOWED_EXT = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp']);
+const EVENT_IMAGE_SIGNED_TTL = 60 * 60 * 24; // 24h (관리자 미리보기용)
 
 function resolveResourceFileType(fileName) {
   const ext = String(fileName || '')
@@ -80,7 +92,8 @@ async function uploadEventImages(fileList) {
 
   if (!EVENT_IMAGE_BUCKET) {
     return {
-      error: '스토리지 버킷 설정(NEXT_PUBLIC_SUPABASE_STORAGE_BUCKET)이 없습니다.',
+      error:
+        '스토리지 버킷 설정(NEXT_PUBLIC_SUPABASE_STORAGE_BUCKET 또는 PEDIATRIC_SUPABASE_STORAGE_BUCKET)이 없습니다.',
     };
   }
 
@@ -107,7 +120,7 @@ async function uploadEventImages(fileList) {
     if (error) {
       console.error('[uploadEventImages]', error);
       for (const uploaded of images) {
-        await removeEventImageFile(uploaded.path);
+        await removeEventImageFile(uploaded.path, uploaded.bucket);
       }
       return { error: error.message || '이미지 업로드에 실패했습니다.' };
     }
@@ -116,10 +129,15 @@ async function uploadEventImages(fileList) {
       data: { publicUrl },
     } = supa.storage.from(EVENT_IMAGE_BUCKET).getPublicUrl(filePath);
 
+    const { data: signed } = await supa.storage
+      .from(EVENT_IMAGE_BUCKET)
+      .createSignedUrl(filePath, EVENT_IMAGE_SIGNED_TTL);
+
     images.push({
       path: filePath,
       name: originalName,
-      url: publicUrl,
+      bucket: EVENT_IMAGE_BUCKET,
+      url: signed?.signedUrl || publicUrl,
     });
   }
 
@@ -136,11 +154,17 @@ async function removeStorageFile(filePath) {
   }
 }
 
-async function removeEventImageFile(filePath) {
-  if (!filePath || !EVENT_IMAGE_BUCKET || /^https?:\/\//i.test(filePath)) return;
+async function removeEventImageFile(filePath, bucketHint) {
+  if (!filePath || /^https?:\/\//i.test(filePath)) return;
   try {
     const supa = await createAdminClient();
-    await supa.storage.from(EVENT_IMAGE_BUCKET).remove([filePath]);
+    const buckets = [
+      ...new Set([bucketHint, ...EVENT_IMAGE_BUCKET_CANDIDATES].filter(Boolean)),
+    ];
+    for (const bucket of buckets) {
+      const { error } = await supa.storage.from(bucket).remove([filePath]);
+      if (!error) return;
+    }
   } catch (error) {
     console.error('[removeEventImageFile]', error);
   }
@@ -158,6 +182,69 @@ function normalizeEventImages(value) {
     }
   }
   return [];
+}
+
+function parseKeepEventImages(formData) {
+  return formData
+    .getAll('keep_images')
+    .map((value) => {
+      try {
+        const parsed = JSON.parse(String(value || ''));
+        if (parsed && (parsed.path || parsed.url)) return parsed;
+      } catch {
+        /* ignore */
+      }
+      return null;
+    })
+    .filter(Boolean);
+}
+
+function isSameEventImage(a, b) {
+  if (a?.path && b?.path && a.path === b.path) return true;
+  if (a?.url && b?.url && a.url === b.url) return true;
+  return false;
+}
+
+async function withFreshEventImageUrls(images) {
+  const list = normalizeEventImages(images);
+  if (!list.length) return [];
+
+  const supa = await createAdminClient();
+  const resolved = [];
+
+  for (const image of list) {
+    if (!image.path) {
+      if (image.url) resolved.push(image);
+      continue;
+    }
+
+    const buckets = [
+      ...new Set([image.bucket, ...EVENT_IMAGE_BUCKET_CANDIDATES].filter(Boolean)),
+    ];
+    let url = image.url || '';
+    let bucket = image.bucket || '';
+
+    for (const candidate of buckets) {
+      const { data, error } = await supa.storage
+        .from(candidate)
+        .createSignedUrl(image.path, EVENT_IMAGE_SIGNED_TTL);
+      if (!error && data?.signedUrl) {
+        url = data.signedUrl;
+        bucket = candidate;
+        break;
+      }
+    }
+
+    if (!url) continue;
+    resolved.push({
+      path: image.path,
+      name: image.name || 'image',
+      bucket: bucket || undefined,
+      url,
+    });
+  }
+
+  return resolved;
 }
 
 export async function getBoardList(boardKey, searchParams = {}, itemsPerPage = 15) {
@@ -187,10 +274,19 @@ export async function getBoardList(boardKey, searchParams = {}, itemsPerPage = 1
     const { data, count, error } = await query;
     if (error) throw error;
 
-    const list = (data || []).map((item, i) => ({
-      ...item,
-      no: count - startIndex - i,
-    }));
+    const list = await Promise.all(
+      (data || []).map(async (item, i) => {
+        const base = {
+          ...item,
+          no: count - startIndex - i,
+        };
+        if (boardKey !== 'events') return base;
+        return {
+          ...base,
+          images: await withFreshEventImageUrls(item.images),
+        };
+      }),
+    );
 
     return { data: list, count: count || 0 };
   } catch (error) {
@@ -312,7 +408,7 @@ export async function createBoardItem(boardKey, formData) {
       }
       if (boardKey === 'events' && Array.isArray(payload.images)) {
         for (const image of payload.images) {
-          await removeEventImageFile(image.path);
+          await removeEventImageFile(image.path, image.bucket);
         }
       }
       if (
@@ -372,7 +468,7 @@ export async function deleteBoardItem(boardKey, id) {
       await removeStorageFile(filePath);
     }
     for (const image of eventImages) {
-      await removeEventImageFile(image.path);
+      await removeEventImageFile(image.path, image.bucket);
     }
 
     revalidatePath(`/pediatric/boards/${boardKey}`);
@@ -426,6 +522,7 @@ export async function updateBoardItem(boardKey, id, formData) {
     let payload = {};
     let oldFilePath = null;
     let newFilePath = null;
+    let removedEventImages = [];
 
     if (boardKey === 'resources') {
       payload = {
@@ -491,29 +588,31 @@ export async function updateBoardItem(boardKey, id, formData) {
       const hasNewImages = files.some((file) => file && typeof file !== 'string' && file.size);
 
       if (manageImages) {
-        const keepPaths = new Set(
-          formData
-            .getAll('keep_image_paths')
-            .map((value) => String(value || '').trim())
-            .filter(Boolean),
+        const keepItems = parseKeepEventImages(formData);
+        const keptImages = previousImages.filter((image) =>
+          keepItems.some((keep) => isSameEventImage(image, keep)),
         );
-        const keptImages = previousImages.filter((image) => image.path && keepPaths.has(image.path));
-        const removedImages = previousImages.filter(
-          (image) => image.path && !keepPaths.has(image.path),
+        removedEventImages = previousImages.filter(
+          (image) => !keepItems.some((keep) => isSameEventImage(image, keep)),
         );
 
-        let nextImages = keptImages;
+        let nextImages = keptImages.map((image) => ({
+          path: image.path || undefined,
+          name: image.name || 'image',
+          bucket: image.bucket || undefined,
+          url: image.url || undefined,
+        }));
+
         if (hasNewImages) {
           const uploadedImages = await uploadEventImages(files);
           if (uploadedImages.error) {
             return { success: false, message: uploadedImages.error };
           }
-          nextImages = [...keptImages, ...uploadedImages.images];
+          nextImages = [...nextImages, ...uploadedImages.images];
           newFilePath = uploadedImages.images.map((image) => image.path).join('|') || null;
         }
 
         payload.images = nextImages;
-        oldFilePath = removedImages.map((image) => image.path).join('|') || null;
       } else if (hasNewImages) {
         const uploadedImages = await uploadEventImages(files);
         if (uploadedImages.error) {
@@ -521,7 +620,7 @@ export async function updateBoardItem(boardKey, id, formData) {
         }
 
         payload.images = uploadedImages.images;
-        oldFilePath = previousImages.map((image) => image.path).join('|') || null;
+        removedEventImages = previousImages;
         newFilePath = uploadedImages.images.map((image) => image.path).join('|') || null;
       }
     } else if (boardKey === 'surveys') {
@@ -556,9 +655,11 @@ export async function updateBoardItem(boardKey, id, formData) {
     const { error } = await supa.from(meta.tableName).update(payload).eq('id', id);
     if (error) {
       if (boardKey === 'resources' && newFilePath) await removeStorageFile(newFilePath);
-      if (boardKey === 'events' && newFilePath) {
-        for (const path of String(newFilePath).split('|').filter(Boolean)) {
-          await removeEventImageFile(path);
+      if (boardKey === 'events' && Array.isArray(payload.images) && newFilePath) {
+        for (const image of payload.images) {
+          if (image.path && String(newFilePath).split('|').includes(image.path)) {
+            await removeEventImageFile(image.path, image.bucket);
+          }
         }
       }
       if (
@@ -577,9 +678,9 @@ export async function updateBoardItem(boardKey, id, formData) {
     if (boardKey === 'resources' && oldFilePath && newFilePath && oldFilePath !== newFilePath) {
       await removeStorageFile(oldFilePath);
     }
-    if (boardKey === 'events' && oldFilePath) {
-      for (const path of String(oldFilePath).split('|').filter(Boolean)) {
-        await removeEventImageFile(path);
+    if (boardKey === 'events' && removedEventImages.length) {
+      for (const image of removedEventImages) {
+        await removeEventImageFile(image.path, image.bucket);
       }
     }
 

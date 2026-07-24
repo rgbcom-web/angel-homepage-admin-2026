@@ -25,6 +25,22 @@ import { toast } from 'sonner';
 const initialState = { success: false, message: '' };
 const inputClass = 'h-9 w-full rounded-md border bg-background px-3 text-sm';
 
+function normalizeClientEventImages(value) {
+  if (!value) return [];
+  if (Array.isArray(value)) {
+    return value.filter((item) => item?.path || item?.url);
+  }
+  if (typeof value === 'string') {
+    try {
+      const parsed = JSON.parse(value);
+      return Array.isArray(parsed) ? parsed.filter((item) => item?.path || item?.url) : [];
+    } catch {
+      return [];
+    }
+  }
+  return [];
+}
+
 const CREATE_TITLES = {
   resources: '자료 등록',
   events: '행사 등록',
@@ -732,9 +748,7 @@ function EventEditButton({ item }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [imageNames, setImageNames] = useState([]);
-  const [keptImages, setKeptImages] = useState(() =>
-    Array.isArray(item.images) ? item.images.filter((img) => img?.path || img?.url) : [],
-  );
+  const [keptImages, setKeptImages] = useState(() => normalizeClientEventImages(item.images));
   const [state, formAction, pending] = useActionState(async (_prev, formData) => {
     const result = await updateBoardItem('events', item.id, formData);
     if (result.success) {
@@ -750,9 +764,7 @@ function EventEditButton({ item }) {
   const handleOpenChange = (nextOpen) => {
     setOpen(nextOpen);
     if (nextOpen) {
-      setKeptImages(
-        Array.isArray(item.images) ? item.images.filter((img) => img?.path || img?.url) : [],
-      );
+      setKeptImages(normalizeClientEventImages(item.images));
       setImageNames([]);
     }
   };
@@ -852,9 +864,16 @@ function EventEditButton({ item }) {
                       <span className="min-w-0 flex-1 truncate text-xs">
                         {img.name || 'image'}
                       </span>
-                      {img.path ? (
-                        <input type="hidden" name="keep_image_paths" value={img.path} />
-                      ) : null}
+                      <input
+                        type="hidden"
+                        name="keep_images"
+                        value={JSON.stringify({
+                          path: img.path || '',
+                          name: img.name || '',
+                          url: img.url || '',
+                          bucket: img.bucket || '',
+                        })}
+                      />
                       <Button
                         type="button"
                         size="xs"
@@ -890,7 +909,9 @@ function EventEditButton({ item }) {
               />
               <p className="text-xs text-muted-foreground">
                 유지 {keptImages.length}장
-                {imageNames.length ? ` · 추가 업로드 ${imageNames.length}개` : ' · 새 파일은 기존에 추가됩니다'}
+                {imageNames.length
+                  ? ` · 추가 업로드 ${imageNames.length}개`
+                  : ' · 새 파일은 기존에 추가됩니다'}
               </p>
             </div>
             <label className="flex items-center gap-2 text-sm">
