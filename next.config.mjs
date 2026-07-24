@@ -8,11 +8,6 @@ const nextConfig = {
   async redirects() {
     return [
       {
-        source: '/',
-        destination: '/pediatric/dashboard',
-        permanent: false,
-      },
-      {
         source: '/pediatric',
         destination: '/pediatric/dashboard',
         permanent: false,
