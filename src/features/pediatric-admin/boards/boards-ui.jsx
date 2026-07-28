@@ -259,12 +259,12 @@ function SurveyCreateForm() {
         </label>
       </div>
       <label className="space-y-1 text-xs text-muted-foreground">
-        구글폼 URL
+        URL
         <input
           name="google_form_url"
-          type="url"
+          type="text"
           required
-          placeholder="https://docs.google.com/forms/..."
+          placeholder="URL을 입력해 주세요"
           className={inputClass}
         />
       </label>
@@ -1010,13 +1010,13 @@ function SurveyEditButton({ item }) {
               </label>
             </div>
             <label className="space-y-1 text-xs text-muted-foreground">
-              구글폼 URL
+              URL
               <input
                 name="google_form_url"
-                type="url"
+                type="text"
                 required
                 defaultValue={item.google_form_url || ''}
-                placeholder="https://docs.google.com/forms/..."
+                placeholder="URL을 입력해 주세요"
                 className={inputClass}
               />
             </label>

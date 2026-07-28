@@ -21,6 +21,78 @@ const CORE_SELECT =
   'id, login_id, email, name, birth_year, phone, affiliation, department, title, address, status, created_at, last_login_at';
 const FULL_SELECT = MEMBER_LIST_SELECT;
 
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function getPediatricPortalOrigin() {
+  const fromEnv =
+    process.env.NEXT_PUBLIC_HOME_SITE_URL ||
+    process.env.NEXT_PUBLIC_SITE_URL ||
+    process.env.NEXT_PUBLIC_PEDIATRIC_SITE_URL;
+  if (fromEnv) return String(fromEnv).replace(/\/$/, '');
+  return 'https://angel-robotics.com';
+}
+
+function getApprovalMailBody({ name, loginId, loginUrl }) {
+  return `
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>가입 승인 안내</title>
+</head>
+<body style="margin: 0; padding: 0; background-color: #f7f7f7; font-family: 'Apple SD Gothic Neo', 'Noto Sans KR', 'Malgun Gothic', sans-serif; color: #333333; line-height: 1.5;">
+  <div style="max-width: 600px; background-color: #ffffff; border-radius: 8px; overflow: hidden; box-shadow: 0 4px 10px rgba(0,0,0,0.05);">
+    <div style="background-color: #f1f5f9; padding: 25px 30px;">
+      <img src="https://angel-robotics.com/images/common/logo-angel.png" alt="엔젤로보틱스 로고" style="height: 24px; display: block;">
+    </div>
+    <div style="padding: 25px 30px 5px; border-bottom: 1px solid #e2e8f0;">
+      <h1 style="margin: 0; color: #1e293b; font-size: 22px; font-weight: 700;">가입 승인 안내</h1>
+      <p style="margin: 8px 0 0; color: #64748b; font-size: 14px;">${escapeHtml(PEDIATRIC_SITE_NAME)}</p>
+    </div>
+    <div style="padding: 20px 30px;">
+      <p style="margin: 0 0 16px; font-size: 15px; color: #334155;">
+        ${escapeHtml(name || loginId)}님, 가입 신청이 <strong>승인</strong>되었습니다.<br>
+        아이디 <strong>${escapeHtml(loginId)}</strong> 로 아래 버튼을 통해 로그인할 수 있습니다.
+      </p>
+      <p style="margin: 0 0 20px; font-size: 13px; color: #64748b;">
+        신청 시 등록한 비밀번호로 로그인해 주세요.
+      </p>
+      <a href="${escapeHtml(loginUrl)}" style="display: inline-block; background-color: #2563eb; color: white; font-weight: 600; text-decoration: none; padding: 12px 16px; border-radius: 6px; font-size: 14px;">
+        포털 로그인
+      </a>
+    </div>
+    <div style="background-color: #f1f5f9; padding: 20px; text-align: center; color: #64748b; font-size: 13px;">
+      <p style="margin: 0;">© ANGEL ROBOTICS. 이 메일은 자동으로 발송되었습니다.</p>
+    </div>
+  </div>
+</body>
+</html>
+  `;
+}
+
+async function sendMemberApprovalMail(member) {
+  if (!member?.email) {
+    return { success: false, message: '회원 이메일이 없습니다.' };
+  }
+
+  const loginUrl = `${getPediatricPortalOrigin()}/pediatric/login`;
+  return sendmail(
+    member.email,
+    `[${PEDIATRIC_SITE_NAME}] 가입이 승인되었습니다`,
+    getApprovalMailBody({
+      name: member.name,
+      loginId: member.login_id,
+      loginUrl,
+    }),
+  );
+}
+
 async function runMembersQuery(buildQuery) {
   const first = await buildQuery(FULL_SELECT);
   if (!first.error) return first;
@@ -234,10 +306,41 @@ export async function updateMemberStatus(id, status) {
     }
 
     const supa = await createAdminClient();
+    const { data: existing, error: findError } = await supa
+      .from(TABLE)
+      .select('id, email, name, login_id, status')
+      .eq('id', id)
+      .single();
+
+    if (findError) throw findError;
+    if (!existing) {
+      return { success: false, message: '회원을 찾을 수 없습니다.' };
+    }
+
+    const previousStatus = existing.status;
     const { error } = await supa.from(TABLE).update({ status }).eq('id', id);
     if (error) throw error;
 
     revalidateMembers();
+
+    // 승인으로 바뀔 때만 안내 메일 (이미 승인된 회원 재저장은 제외)
+    if (status === 'approved' && previousStatus !== 'approved') {
+      const mailResult = await sendMemberApprovalMail(existing);
+      if (!mailResult?.success) {
+        console.error('[updateMemberStatus] approval mail failed', mailResult);
+        return {
+          success: true,
+          message: '승인되었습니다. 다만 안내 메일 발송에 실패했습니다.',
+          mailSent: false,
+        };
+      }
+      return {
+        success: true,
+        message: '승인되었습니다. 회원에게 안내 메일을 발송했습니다.',
+        mailSent: true,
+      };
+    }
+
     return { success: true };
   } catch (error) {
     console.error(error);

@@ -207,7 +207,7 @@ function MemberDetailPanel({ memberId, onClose, onChanged }) {
         toast.error(result.message);
         return;
       }
-      toast.success(successMessage);
+      toast.success(result.message || successMessage);
       refresh();
     });
   };

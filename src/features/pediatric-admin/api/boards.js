@@ -400,10 +400,7 @@ export async function createBoardItem(boardKey, formData) {
         return { success: false, message: '종료일은 시작일 이후여야 합니다.' };
       }
       if (!googleFormUrl) {
-        return { success: false, message: '구글폼 URL을 입력해 주세요.' };
-      }
-      if (!/^https?:\/\//i.test(googleFormUrl)) {
-        return { success: false, message: '구글폼 URL은 http(s):// 로 시작해야 합니다.' };
+        return { success: false, message: 'URL을 입력해 주세요.' };
       }
 
       payload = {
@@ -655,10 +652,7 @@ export async function updateBoardItem(boardKey, id, formData) {
         return { success: false, message: '종료일은 시작일 이후여야 합니다.' };
       }
       if (!googleFormUrl) {
-        return { success: false, message: '구글폼 URL을 입력해 주세요.' };
-      }
-      if (!/^https?:\/\//i.test(googleFormUrl)) {
-        return { success: false, message: '구글폼 URL은 http(s):// 로 시작해야 합니다.' };
+        return { success: false, message: 'URL을 입력해 주세요.' };
       }
 
       payload = {
