@@ -5,12 +5,16 @@ import CustomEditor from 'ckeditor5-custom-build';
 import customUploadAdapter from './upload-adapter';
 import { useRef } from 'react';
 
-export default function CKEditor5({ field, tableName }) {
+/**
+ * @param {Object} [props.uploadTarget] 본문 이미지를 올릴 곳 ({ createClient, bucket }).
+ *   생략하면 기본 Supabase 프로젝트·버킷을 씁니다.
+ */
+export default function CKEditor5({ field, tableName, uploadTarget }) {
   const editorContainerRef = useRef(null);
 
   function uploadAdapter(editor) {
     editor.plugins.get('FileRepository').createUploadAdapter = (loader) => {
-      return customUploadAdapter(loader, tableName);
+      return customUploadAdapter(loader, tableName, uploadTarget);
     };
   }
   return (

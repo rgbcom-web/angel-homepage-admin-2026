@@ -14,7 +14,7 @@ export const PEDIATRIC_BOARD_META = {
     key: 'resources',
     title: '자료실',
     tableName: PEDIATRIC_TABLES.resources,
-    description: `${PEDIATRIC_SITE_NAME} 자료실 게시글을 관리합니다. 상단 공지·홈 공지 체크 시 포털에 노출됩니다. 첨부 파일은 포털에서 다운로드되지 않고 보안 뷰어로만 열람됩니다.`,
+    description: `${PEDIATRIC_SITE_NAME} 자료실 게시글을 관리합니다. 상단 공지·홈 공지 체크 시 포털에 노출됩니다. 첨부 파일은 여러 개 등록할 수 있으며, 포털에서 다운로드되지 않고 보안 뷰어로만 열람됩니다.`,
   },
   events: {
     key: 'events',

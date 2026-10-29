@@ -135,6 +135,20 @@
   box-shadow: none !important;
 }
 
+/* 시트·모달 안의 에디터: 위 sticky(top 69px)는 페이지 헤더 기준이라 스크롤 컨테이너 안에서
+   툴바가 본문 위로 떠 버립니다. 이 클래스로 감싸면 툴바를 제자리에 고정합니다. */
+.ck-toolbar-static .ck-editor__top,
+.ck-toolbar-static .ck-sticky-panel__content,
+.ck-toolbar-static .ck-sticky-panel__content_sticky {
+  position: static !important;
+  top: auto !important;
+  width: auto !important;
+}
+
+.ck-toolbar-static .ck-sticky-panel__placeholder {
+  display: none !important;
+}
+
 .ck-body-wrapper, .ck-body-wrapper * {
   pointer-events: initial !important;
 }

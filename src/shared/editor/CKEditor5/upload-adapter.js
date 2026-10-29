@@ -3,7 +3,12 @@
 import { convertFileSize, getByteSize } from '@/shared/lib/files.utils';
 import { uploadImage } from './upload-image';
 
-const customUploadAdapter = (loader, tableName, maxSize = 2) => {
+/**
+ * @param {Object} [uploadTarget] 업로드 대상 지정 ({ createClient, bucket }).
+ *   생략하면 기본 Supabase 스키마·버킷에 올립니다.
+ *   전용 스키마·버킷을 쓰는 화면(BCI 자문단)에서만 넘깁니다.
+ */
+const customUploadAdapter = (loader, tableName, uploadTarget, maxSize = 2) => {
   return {
     async upload() {
       const file = await loader.file;
@@ -19,7 +24,7 @@ const customUploadAdapter = (loader, tableName, maxSize = 2) => {
       const formData = new FormData();
       formData.append('tableName', tableName);
       formData.append('file', file, encodeURIComponent(file.name));
-      const { data: uploadResult, error } = await uploadImage(formData);
+      const { data: uploadResult, error } = await uploadImage(formData, uploadTarget);
 
       // 에러 처리
       if (error) {

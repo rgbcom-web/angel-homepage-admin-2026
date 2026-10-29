@@ -5,7 +5,11 @@ import { useAuth } from './AuthSessionProvider';
 import { useSession } from 'next-auth/react';
 import { useEffect } from 'react';
 
-export function checkSessionClient({ permission, redirectUrl } = {}) {
+/**
+ * useAuth·useRouter 를 호출하므로 훅 규칙상 이름이 use 로 시작해야 합니다.
+ * (react-hooks/rules-of-hooks)
+ */
+export function useCheckSessionClient({ permission, redirectUrl } = {}) {
   const { user } = useAuth();
   const router = useRouter();
 

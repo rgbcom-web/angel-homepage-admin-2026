@@ -54,45 +54,211 @@ function contentTypeForEventAttachment(extension, fileType) {
   return undefined;
 }
 
-async function uploadResourceFile(file) {
-  if (!file || typeof file === 'string' || !file.size) {
-    return { error: '첨부 파일을 선택해 주세요.' };
+function normalizeResourceFiles(value) {
+  if (!value) return [];
+  if (Array.isArray(value)) {
+    return value
+      .filter((item) => item?.path)
+      .map((item) => ({
+        path: item.path,
+        name: item.name || 'attachment',
+        type: item.type || resolveResourceFileType(item.name || item.path),
+        bucket: item.bucket || BUCKET_NAME || undefined,
+      }));
   }
-
-  if (file.size > RESOURCE_MAX_BYTES) {
-    return { error: '파일 크기는 50MB 이하여야 합니다.' };
+  if (typeof value === 'string') {
+    try {
+      const parsed = JSON.parse(value);
+      return normalizeResourceFiles(parsed);
+    } catch {
+      return [];
+    }
   }
+  return [];
+}
 
-  const originalName = file.name || 'attachment';
-  const extension = originalName.split('.').pop()?.toLowerCase() || '';
-  if (!RESOURCE_ALLOWED_EXT.has(extension)) {
-    return { error: 'PDF 또는 이미지(png/jpg/gif/webp)만 업로드할 수 있습니다.' };
+/** 레거시 단일 컬럼 + files jsonb 모두 지원 */
+function resolveResourceFilesFromRow(row) {
+  const fromJson = normalizeResourceFiles(row?.files);
+  if (fromJson.length) return fromJson;
+  if (row?.file_path) {
+    return [
+      {
+        path: row.file_path,
+        name: row.file_name || 'attachment',
+        type: row.file_type || resolveResourceFileType(row.file_name || row.file_path),
+        bucket: BUCKET_NAME || undefined,
+      },
+    ];
+  }
+  return [];
+}
+
+function filesToScalarFields(files) {
+  const first = files?.[0];
+  if (!first?.path) {
+    return { file_path: '', file_name: '', file_type: 'pdf' };
+  }
+  return {
+    file_path: first.path,
+    file_name: first.name || 'attachment',
+    file_type: first.type || resolveResourceFileType(first.name || first.path),
+  };
+}
+
+function parseKeepResourceFiles(formData) {
+  return formData
+    .getAll('keep_files')
+    .map((value) => {
+      try {
+        const parsed = JSON.parse(String(value || ''));
+        if (parsed?.path) {
+          return {
+            path: parsed.path,
+            name: parsed.name || 'attachment',
+            type: parsed.type || resolveResourceFileType(parsed.name || parsed.path),
+            bucket: parsed.bucket || BUCKET_NAME || undefined,
+          };
+        }
+      } catch {
+        /* ignore */
+      }
+      return null;
+    })
+    .filter(Boolean);
+}
+
+function isSameResourceFile(a, b) {
+  return Boolean(a?.path && b?.path && a.path === b.path);
+}
+
+async function uploadResourceFiles(fileList) {
+  const files = Array.from(fileList || []).filter(
+    (file) => file && typeof file !== 'string' && file.size,
+  );
+  if (!files.length) {
+    return { files: [] };
   }
 
   if (!BUCKET_NAME) {
     return {
-      error:
-        '스토리지 버킷 설정(PEDIATRIC_SUPABASE_STORAGE_BUCKET)이 없습니다.',
+      error: '스토리지 버킷 설정(PEDIATRIC_SUPABASE_STORAGE_BUCKET)이 없습니다.',
     };
   }
 
-  const filePath = `${RESOURCE_UPLOAD_PATH}/attachment-${uuidv4()}.${extension}`;
   const supa = await createAdminClient();
-  const { error } = await supa.storage.from(BUCKET_NAME).upload(filePath, file, {
-    contentType: file.type || undefined,
-    upsert: false,
-  });
+  const uploaded = [];
 
-  if (error) {
-    console.error('[uploadResourceFile]', error);
-    return { error: error.message || '파일 업로드에 실패했습니다.' };
+  for (const file of files) {
+    if (file.size > RESOURCE_MAX_BYTES) {
+      for (const item of uploaded) {
+        await removeStorageFile(item.path);
+      }
+      return { error: '파일 크기는 각 50MB 이하여야 합니다.' };
+    }
+
+    const originalName = file.name || 'attachment';
+    const extension = originalName.split('.').pop()?.toLowerCase() || '';
+    if (!RESOURCE_ALLOWED_EXT.has(extension)) {
+      for (const item of uploaded) {
+        await removeStorageFile(item.path);
+      }
+      return { error: 'PDF 또는 이미지(png/jpg/gif/webp)만 업로드할 수 있습니다.' };
+    }
+
+    const filePath = `${RESOURCE_UPLOAD_PATH}/attachment-${uuidv4()}.${extension}`;
+    const { error } = await supa.storage.from(BUCKET_NAME).upload(filePath, file, {
+      contentType: file.type || undefined,
+      upsert: false,
+    });
+
+    if (error) {
+      console.error('[uploadResourceFiles]', error);
+      for (const item of uploaded) {
+        await removeStorageFile(item.path);
+      }
+      return { error: error.message || '파일 업로드에 실패했습니다.' };
+    }
+
+    uploaded.push({
+      path: filePath,
+      name: originalName,
+      type: resolveResourceFileType(originalName),
+      bucket: BUCKET_NAME,
+    });
   }
 
-  return {
-    file_path: filePath,
-    file_name: originalName,
-    file_type: resolveResourceFileType(originalName),
-  };
+  return { files: uploaded };
+}
+
+/** 클라이언트가 Storage로 직접 올리기 위한 signed upload URL 발급 (Vercel 본문 크기 제한 회피) */
+export async function prepareResourceUploads(fileMetas = []) {
+  try {
+    if (!BUCKET_NAME) {
+      return {
+        success: false,
+        message: '스토리지 버킷 설정(PEDIATRIC_SUPABASE_STORAGE_BUCKET)이 없습니다.',
+      };
+    }
+
+    const list = Array.isArray(fileMetas) ? fileMetas : [];
+    if (!list.length) {
+      return { success: false, message: '첨부 파일을 선택해 주세요.' };
+    }
+
+    const supa = await createAdminClient();
+    const prepared = [];
+
+    for (const meta of list) {
+      const originalName = String(meta?.name || 'attachment');
+      const size = Number(meta?.size) || 0;
+      const extension = originalName.split('.').pop()?.toLowerCase() || '';
+
+      if (size <= 0) {
+        return { success: false, message: '빈 파일은 업로드할 수 없습니다.' };
+      }
+      if (size > RESOURCE_MAX_BYTES) {
+        return { success: false, message: '파일 크기는 각 50MB 이하여야 합니다.' };
+      }
+      if (!RESOURCE_ALLOWED_EXT.has(extension)) {
+        return { success: false, message: 'PDF 또는 이미지(png/jpg/gif/webp)만 업로드할 수 있습니다.' };
+      }
+
+      const path = `${RESOURCE_UPLOAD_PATH}/attachment-${uuidv4()}.${extension}`;
+      const { data, error } = await supa.storage.from(BUCKET_NAME).createSignedUploadUrl(path);
+      if (error || !data?.token) {
+        console.error('[prepareResourceUploads]', error);
+        return {
+          success: false,
+          message: error?.message || '업로드 URL을 만들지 못했습니다.',
+        };
+      }
+
+      prepared.push({
+        path: data.path || path,
+        token: data.token,
+        signedUrl: data.signedUrl || '',
+        name: originalName,
+        type: resolveResourceFileType(originalName),
+        bucket: BUCKET_NAME,
+      });
+    }
+
+    return { success: true, prepared, bucket: BUCKET_NAME };
+  } catch (error) {
+    console.error('[prepareResourceUploads]', error);
+    return { success: false, message: error.message || '업로드 준비에 실패했습니다.' };
+  }
+}
+
+function parseUploadedResourceFilesField(formData) {
+  const raw = formData.get('uploaded_files');
+  if (!raw || typeof raw === 'object') return [];
+  try {
+    return normalizeResourceFiles(JSON.parse(String(raw)));
+  } catch {
+    return [];
+  }
 }
 
 async function uploadEventImages(fileList) {
@@ -344,18 +510,28 @@ export async function createBoardItem(boardKey, formData) {
     };
 
     if (boardKey === 'resources') {
-      const file = formData.get('file');
-      const uploaded = await uploadResourceFile(file);
-      if (uploaded.error) {
-        return { success: false, message: uploaded.error };
+      // 1) 클라이언트 직접 업로드 메타 우선 (대용량 PDF / Vercel 본문 제한 회피)
+      let resourceFiles = parseUploadedResourceFilesField(formData);
+
+      // 2) 없으면 기존 FormData 파일 업로드 (소용량·로컬 호환)
+      if (!resourceFiles.length) {
+        const uploaded = await uploadResourceFiles(formData.getAll('files'));
+        if (uploaded.error) {
+          return { success: false, message: uploaded.error };
+        }
+        resourceFiles = uploaded.files;
       }
 
+      if (!resourceFiles.length) {
+        return { success: false, message: '첨부 파일을 선택해 주세요.' };
+      }
+
+      const scalar = filesToScalarFields(resourceFiles);
       payload = {
         ...payload,
         views: 0,
-        file_path: uploaded.file_path,
-        file_name: uploaded.file_name,
-        file_type: uploaded.file_type,
+        files: resourceFiles,
+        ...scalar,
       };
     } else if (boardKey === 'events') {
       const category = String(formData.get('category') || '').trim().slice(0, 3);
@@ -421,8 +597,20 @@ export async function createBoardItem(boardKey, formData) {
     const supa = await createAdminClient();
     const { error } = await supa.from(meta.tableName).insert(payload);
     if (error) {
-      if (boardKey === 'resources' && payload.file_path) {
-        await removeStorageFile(payload.file_path);
+      if (boardKey === 'resources' && Array.isArray(payload.files)) {
+        for (const file of payload.files) {
+          await removeStorageFile(file.path);
+        }
+      }
+      if (
+        boardKey === 'resources' &&
+        /files['"]?\s*column|schema cache/i.test(String(error.message || ''))
+      ) {
+        return {
+          success: false,
+          message:
+            'DB에 files 컬럼이 없습니다. Supabase에서 sql/advisory_resources.sql 의 alter 문을 실행해 주세요.',
+        };
       }
       if (boardKey === 'events' && Array.isArray(payload.images)) {
         for (const image of payload.images) {
@@ -461,13 +649,15 @@ export async function deleteBoardItem(boardKey, id) {
     const supa = await createAdminClient();
 
     let filePath = null;
+    let resourceFiles = [];
     let eventImages = [];
     if (boardKey === 'resources') {
       const { data: existing } = await supa
         .from(meta.tableName)
-        .select('file_path')
+        .select('file_path, files')
         .eq('id', id)
         .maybeSingle();
+      resourceFiles = resolveResourceFilesFromRow(existing);
       filePath = existing?.file_path || null;
     }
     if (boardKey === 'events') {
@@ -482,7 +672,11 @@ export async function deleteBoardItem(boardKey, id) {
     const { error } = await supa.from(meta.tableName).delete().eq('id', id);
     if (error) throw error;
 
-    if (filePath) {
+    if (resourceFiles.length) {
+      for (const file of resourceFiles) {
+        await removeStorageFile(file.path);
+      }
+    } else if (filePath) {
       await removeStorageFile(filePath);
     }
     for (const image of eventImages) {
@@ -540,6 +734,7 @@ export async function updateBoardItem(boardKey, id, formData) {
     let payload = {};
     let oldFilePath = null;
     let newFilePath = null;
+    let removedResourceFiles = [];
     let removedEventImages = [];
 
     if (boardKey === 'resources') {
@@ -550,23 +745,71 @@ export async function updateBoardItem(boardKey, id, formData) {
         show_in_notice: showInNotice,
       };
 
-      const file = formData.get('file');
-      if (file && typeof file !== 'string' && file.size) {
-        const { data: existing } = await supa
-          .from(meta.tableName)
-          .select('file_path')
-          .eq('id', id)
-          .maybeSingle();
-        oldFilePath = existing?.file_path || null;
+      const { data: existing } = await supa
+        .from(meta.tableName)
+        .select('file_path, file_name, file_type, files')
+        .eq('id', id)
+        .maybeSingle();
+      const previousFiles = resolveResourceFilesFromRow(existing);
+      const manageFiles = formData.get('manage_files') === '1';
+      const incoming = formData.getAll('files');
+      const preUploaded = parseUploadedResourceFilesField(formData);
+      const hasNewFiles =
+        preUploaded.length > 0 ||
+        incoming.some((file) => file && typeof file !== 'string' && file.size);
 
-        const uploaded = await uploadResourceFile(file);
-        if (uploaded.error) {
-          return { success: false, message: uploaded.error };
+      if (manageFiles) {
+        const keepItems = parseKeepResourceFiles(formData);
+        const keptFiles = previousFiles.filter((file) =>
+          keepItems.some((keep) => isSameResourceFile(file, keep)),
+        );
+        removedResourceFiles = previousFiles.filter(
+          (file) => !keepItems.some((keep) => isSameResourceFile(file, keep)),
+        );
+
+        let nextFiles = keptFiles.map((file) => ({
+          path: file.path,
+          name: file.name || 'attachment',
+          type: file.type || resolveResourceFileType(file.name || file.path),
+          bucket: file.bucket || BUCKET_NAME || undefined,
+        }));
+
+        if (hasNewFiles) {
+          let uploadedFiles = preUploaded;
+          if (!uploadedFiles.length) {
+            const uploaded = await uploadResourceFiles(incoming);
+            if (uploaded.error) {
+              return { success: false, message: uploaded.error };
+            }
+            uploadedFiles = uploaded.files;
+          }
+          nextFiles = [...nextFiles, ...uploadedFiles];
+          newFilePath = uploadedFiles.map((file) => file.path).join('|') || null;
         }
-        payload.file_path = uploaded.file_path;
-        payload.file_name = uploaded.file_name;
-        payload.file_type = uploaded.file_type;
-        newFilePath = uploaded.file_path;
+
+        if (!nextFiles.length) {
+          return { success: false, message: '첨부 파일은 최소 1개 이상이어야 합니다.' };
+        }
+
+        payload.files = nextFiles;
+        Object.assign(payload, filesToScalarFields(nextFiles));
+      } else if (hasNewFiles) {
+        // 레거시: 새 파일만 오면 전체 교체
+        let uploadedFiles = preUploaded;
+        if (!uploadedFiles.length) {
+          const uploaded = await uploadResourceFiles(incoming);
+          if (uploaded.error) {
+            return { success: false, message: uploaded.error };
+          }
+          uploadedFiles = uploaded.files;
+        }
+        if (!uploadedFiles.length) {
+          return { success: false, message: '첨부 파일을 선택해 주세요.' };
+        }
+        payload.files = uploadedFiles;
+        Object.assign(payload, filesToScalarFields(uploadedFiles));
+        removedResourceFiles = previousFiles;
+        newFilePath = uploadedFiles.map((file) => file.path).join('|') || null;
       }
     } else if (boardKey === 'events') {
       const category = String(formData.get('category') || '').trim().slice(0, 3);
@@ -670,7 +913,21 @@ export async function updateBoardItem(boardKey, id, formData) {
 
     const { error } = await supa.from(meta.tableName).update(payload).eq('id', id);
     if (error) {
-      if (boardKey === 'resources' && newFilePath) await removeStorageFile(newFilePath);
+      if (boardKey === 'resources' && newFilePath) {
+        for (const path of String(newFilePath).split('|').filter(Boolean)) {
+          await removeStorageFile(path);
+        }
+      }
+      if (
+        boardKey === 'resources' &&
+        /files['"]?\s*column|schema cache/i.test(String(error.message || ''))
+      ) {
+        return {
+          success: false,
+          message:
+            'DB에 files 컬럼이 없습니다. Supabase에서 sql/advisory_resources.sql 의 alter 문을 실행해 주세요.',
+        };
+      }
       if (boardKey === 'events' && Array.isArray(payload.images) && newFilePath) {
         for (const image of payload.images) {
           if (image.path && String(newFilePath).split('|').includes(image.path)) {
@@ -691,6 +948,11 @@ export async function updateBoardItem(boardKey, id, formData) {
       throw error;
     }
 
+    if (boardKey === 'resources' && removedResourceFiles.length) {
+      for (const file of removedResourceFiles) {
+        await removeStorageFile(file.path);
+      }
+    }
     if (boardKey === 'resources' && oldFilePath && newFilePath && oldFilePath !== newFilePath) {
       await removeStorageFile(oldFilePath);
     }
@@ -713,29 +975,40 @@ export async function updateBoardItem(boardKey, id, formData) {
 }
 
 /** 자료실 파일 열람용 URL (다운로드 Disposition 아님 — 뷰어 inline) */
-export async function getResourceViewUrl(id) {
+export async function getResourceViewUrl(id, index = 0) {
   try {
     const meta = PEDIATRIC_BOARD_META.resources;
     const supa = await createAdminClient();
     const { data, error } = await supa
       .from(meta.tableName)
-      .select('file_path, file_name, file_type, title')
+      .select('file_path, file_name, file_type, files, title')
       .eq('id', id)
       .maybeSingle();
 
     if (error) throw error;
-    if (!data?.file_path) {
+
+    const files = resolveResourceFilesFromRow(data);
+    const selected =
+      files[Number.isFinite(Number(index)) ? Math.max(0, Number(index)) : 0] || files[0];
+
+    if (!selected?.path) {
       return { success: false, message: '등록된 파일이 없습니다.' };
     }
 
-    const filePath = data.file_path;
+    const filePath = selected.path;
+    const fileName = selected.name || data?.file_name || '';
+    const fileType =
+      selected.type || data?.file_type || resolveResourceFileType(fileName || filePath);
+
     if (/^https?:\/\//i.test(filePath)) {
       return {
         success: true,
         url: filePath,
-        fileName: data.file_name || '',
-        fileType: data.file_type || 'pdf',
+        fileName,
+        fileType,
         title: data.title || '',
+        files,
+        index: files.indexOf(selected),
       };
     }
 
@@ -747,17 +1020,18 @@ export async function getResourceViewUrl(id) {
     }
 
     const legacyBucket = process.env.NEXT_PUBLIC_SUPABASE_STORAGE_BUCKET;
+    const preferBucket = selected.bucket || BUCKET_NAME;
     let signed = null;
     let signError = null;
 
     ({ data: signed, error: signError } = await supa.storage
-      .from(BUCKET_NAME)
+      .from(preferBucket)
       .createSignedUrl(filePath, 60 * 30));
 
     if (
       (signError || !signed?.signedUrl) &&
       legacyBucket &&
-      legacyBucket !== BUCKET_NAME
+      legacyBucket !== preferBucket
     ) {
       ({ data: signed, error: signError } = await supa.storage
         .from(legacyBucket)
@@ -776,9 +1050,11 @@ export async function getResourceViewUrl(id) {
     return {
       success: true,
       url: signed.signedUrl,
-      fileName: data.file_name || '',
-      fileType: data.file_type || 'pdf',
+      fileName,
+      fileType,
       title: data.title || '',
+      files,
+      index: Math.max(0, files.findIndex((f) => f.path === selected.path)),
     };
   } catch (error) {
     console.error('[getResourceViewUrl]', error);

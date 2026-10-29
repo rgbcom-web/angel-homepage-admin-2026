@@ -193,7 +193,42 @@ export const menuTree = [
     ],
   },
   {
+    // 최고관리자만 사이드바에 표시
     permission: (user) => user?.super_admin,
+    title: '뇌-AI-로봇 연동시스템 개발 자문단',
+    items: [
+      {
+        title: 'Dashboard',
+        icon: LayoutDashboard,
+        url: '/bci/dashboard',
+      },
+      {
+        title: '회원관리',
+        icon: Users,
+        url: '/bci/members',
+      },
+      {
+        title: '게시판 관리',
+        icon: LayoutList,
+        items: [
+          {
+            title: '자료실',
+            url: '/bci/boards/resources',
+          },
+          {
+            title: '행사관리',
+            url: '/bci/boards/events',
+          },
+          {
+            title: '설문관리',
+            url: '/bci/boards/surveys',
+          },
+        ],
+      },
+    ],
+  },
+  {
+    permission: (user) => user.super_admin,
     title: '계정',
     items: [
       {

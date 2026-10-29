@@ -2,17 +2,8 @@
 const nextConfig = {
   experimental: {
     serverActions: {
-      bodySizeLimit: '30mb',
+      bodySizeLimit: '50mb',
     },
-  },
-  async redirects() {
-    return [
-      {
-        source: '/pediatric',
-        destination: '/pediatric/dashboard',
-        permanent: false,
-      },
-    ];
   },
   async rewrites() {
     return [

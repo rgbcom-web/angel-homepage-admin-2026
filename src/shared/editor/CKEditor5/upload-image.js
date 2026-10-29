@@ -8,10 +8,21 @@ const BUCKET_NAME = process.env.NEXT_PUBLIC_SUPABASE_STORAGE_BUCKET;
 const ALLOWED_MIME_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
 const ALLOWED_MAX_SIZE = getByteSize(2);
 
-export async function uploadImage(formData) {
-  const supabase = createClient();
-
+/**
+ * @param {Object} [uploadTarget] 업로드 대상 지정 ({ createClient, bucket }).
+ *   생략하면 기본 Supabase 프로젝트·버킷에 올립니다.
+ */
+export async function uploadImage(formData, uploadTarget) {
   try {
+    const bucketName = uploadTarget?.bucket || BUCKET_NAME;
+    if (!bucketName) {
+      throw new Error('업로드할 스토리지 버킷 설정이 없습니다.');
+    }
+
+    // 업로드 대상이 지정된 경우 그 프로젝트의 클라이언트를 씁니다.
+    // 설정이 없으면 createClient 가 던지므로 try 안에서 만듭니다.
+    const supabase = uploadTarget?.createClient ? uploadTarget.createClient() : createClient();
+
     const { file, tableName } = Object.fromEntries(formData);
 
     if (!file) {
@@ -34,7 +45,7 @@ export async function uploadImage(formData) {
     const fileName = markFileName(`${uuidv4()}.${ext}`);
     const filePath = `${tableName}/editor/${fileName}`;
 
-    const storage = supabase.storage.from(BUCKET_NAME);
+    const storage = supabase.storage.from(bucketName);
     const upload = storage.upload(filePath, file);
     const result = await upload;
 

@@ -21,3 +21,8 @@ alter table public.advisory_resources
   add column if not exists views integer default 0,
   add column if not exists is_notice boolean default false,
   add column if not exists show_in_notice boolean default false;
+
+-- 다중 첨부: [{ path, name, type, bucket? }]
+-- file_path / file_name / file_type 은 첫 번째 파일과 동기화(하위 호환)
+alter table public.advisory_resources
+  add column if not exists files jsonb default '[]'::jsonb;
